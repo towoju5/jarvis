@@ -148,7 +148,10 @@ async def main() -> None:
 
     warmup_task = asyncio.create_task(_run_warmup())
 
-    logger.info("ready. press %s or say the wake word to trigger.", settings.trigger_hotkey)
+    if settings.enable_hotkey_trigger:
+        logger.info("ready. press %s or say the wake word to trigger.", settings.trigger_hotkey)
+    else:
+        logger.info("ready. say the wake word to trigger (hotkey disabled -- see ENABLE_HOTKEY_TRIGGER).")
 
     try:
         while True:

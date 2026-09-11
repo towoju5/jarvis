@@ -27,6 +27,12 @@ RELOAD_POLL_INTERVAL_SECONDS = 2.0
 class Settings:
     agent_name: str = "Jarvis"
     trigger_hotkey: str = "<cmd>+z"
+    # Off by default: pynput's hotkey listener is X11-based and generally
+    # can't receive global keypresses on GNOME/Wayland (or Wayland
+    # compositors in general) unless the agent's own window has focus.
+    # The wake word doesn't have this problem. Turn this on if you're on
+    # X11, or a Wayland setup where you've confirmed it actually works.
+    enable_hotkey_trigger: bool = False
     execution_mode: str = "OFFLINE"
 
     # .en (English-only) variants are preferred over the multilingual ones:
@@ -53,6 +59,8 @@ class Settings:
         return cls(
             agent_name=get("AGENT_NAME", defaults.agent_name),
             trigger_hotkey=get("TRIGGER_HOTKEY", defaults.trigger_hotkey),
+            enable_hotkey_trigger=get("ENABLE_HOTKEY_TRIGGER", str(defaults.enable_hotkey_trigger)).strip().lower()
+            in ("1", "true", "yes", "on"),
             execution_mode=get("EXECUTION_MODE", defaults.execution_mode).upper(),
             whisper_model_size=get("WHISPER_MODEL_SIZE", defaults.whisper_model_size),
             piper_voice_model=get("PIPER_VOICE_MODEL", defaults.piper_voice_model),

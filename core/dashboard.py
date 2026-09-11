@@ -54,7 +54,7 @@ def _status_json(settings: Settings, status: AgentStatus, state_manager: StateMa
     return {
         "agent_name": settings.agent_name,
         "execution_mode": settings.execution_mode,
-        "trigger_hotkey": settings.trigger_hotkey,
+        "trigger_hotkey": settings.trigger_hotkey if settings.enable_hotkey_trigger else "disabled (wake word only)",
         "status": status.state,
         "status_detail": status.detail,
         "tasks": tasks,

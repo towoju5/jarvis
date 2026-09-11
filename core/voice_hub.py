@@ -192,18 +192,26 @@ class VoiceHub:
     # -- public API --------------------------------------------------------
 
     def start(self) -> None:
-        """Registers the hotkey and opens the mic stream independently --
-        a failure in one (e.g. no X11 session, or PortAudio missing) does
-        not prevent the other from working. Raises only if both fail.
+        """Registers the hotkey (if enabled) and opens the mic stream
+        independently -- a failure in one (e.g. no X11 session, or
+        PortAudio missing) does not prevent the other from working.
+        Raises only if both the hotkey was attempted and failed, and the
+        mic also failed.
         """
         hotkey_error: HotkeyRegistrationError | None = None
         mic_error: MicStreamError | None = None
 
-        try:
-            self._start_hotkey_listener()
-        except HotkeyRegistrationError as exc:
-            hotkey_error = exc
-            logger.error("%s", exc)
+        if self._settings.enable_hotkey_trigger:
+            try:
+                self._start_hotkey_listener()
+            except HotkeyRegistrationError as exc:
+                hotkey_error = exc
+                logger.error("%s", exc)
+        else:
+            logger.info(
+                "hotkey trigger disabled (ENABLE_HOTKEY_TRIGGER=false); using the wake word only. "
+                "See config/settings.py for why this is off by default on Wayland."
+            )
 
         try:
             self._start_mic_stream()
@@ -212,7 +220,9 @@ class VoiceHub:
             mic_error = exc
             logger.error("%s (mic capture, wake word, and TTS playback are disabled)", exc)
 
-        if hotkey_error and mic_error:
+        # Raise if the mic failed and there's no working hotkey fallback --
+        # covers both "hotkey also failed" and "hotkey was never enabled".
+        if mic_error and (hotkey_error or not self._settings.enable_hotkey_trigger):
             raise mic_error
 
     async def speak(self, text: str) -> None:
