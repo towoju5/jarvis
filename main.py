@@ -9,7 +9,15 @@ import logging
 import sys
 
 from config.settings import get_settings, settings_manager
-from core.voice_hub import VOICE_TRIGGER_ACTIVATED, HotkeyRegistrationError, VoiceHub
+from core.voice_hub import (
+    TRANSCRIPT_EMPTY,
+    TRANSCRIPT_READY,
+    VOICE_TRIGGER_ACTIVATED,
+    HotkeyRegistrationError,
+    MicStreamError,
+    VoiceEvent,
+    VoiceHub,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,11 +27,18 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
-async def handle_event(event_name: str) -> None:
-    if event_name == VOICE_TRIGGER_ACTIVATED:
-        settings = get_settings()
+async def handle_event(event: VoiceEvent, voice_hub: VoiceHub) -> None:
+    settings = get_settings()
+    if event.name == VOICE_TRIGGER_ACTIVATED:
         logger.info("%s is listening...", settings.agent_name)
-        # Phase 2 wires actual audio capture + transcription in here.
+    elif event.name == TRANSCRIPT_READY:
+        text = event.payload
+        logger.info("heard: %r", text)
+        # Phase 4/5 route this to the state manager + approval flow instead
+        # of a canned reply.
+        await voice_hub.speak(f"You said: {text}")
+    elif event.name == TRANSCRIPT_EMPTY:
+        logger.info("no speech detected")
 
 
 async def main() -> None:
@@ -38,20 +53,20 @@ async def main() -> None:
     settings_manager.start_watching()
 
     loop = asyncio.get_running_loop()
-    event_queue: asyncio.Queue[str] = asyncio.Queue()
+    event_queue: asyncio.Queue[VoiceEvent] = asyncio.Queue()
     voice_hub = VoiceHub(event_queue, loop)
 
     try:
         voice_hub.start()
-    except HotkeyRegistrationError:
-        logger.exception("could not register hotkey listener; continuing without it")
+    except (HotkeyRegistrationError, MicStreamError):
+        logger.exception("could not start any voice trigger (hotkey and mic both failed)")
 
-    logger.info("ready. press %s to trigger.", settings.trigger_hotkey)
+    logger.info("ready. press %s or say the wake word to trigger.", settings.trigger_hotkey)
 
     try:
         while True:
-            event_name = await event_queue.get()
-            await handle_event(event_name)
+            event = await event_queue.get()
+            await handle_event(event, voice_hub)
     except asyncio.CancelledError:
         pass
     finally:

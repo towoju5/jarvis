@@ -6,3 +6,8 @@ __pycache__/
 logs/*.log
 *.egg-info/
 .DS_Store
+
+# Downloaded model weights -- large binaries, fetched on demand, not source
+assets/piper_voices/
+*.onnx
+*.onnx.json
