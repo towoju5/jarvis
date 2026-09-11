@@ -1,20 +1,26 @@
-"""Entrypoint: wires the voice trigger through generation, approval, and
-publishing. Each transcript becomes a task: generate -> request Telegram
-approval -> publish to YouTube (the only platform with a real upload path
-today, see SUPPORTED.md). A NotImplementedError from an unconfigured
-backend (no video-gen provider chosen, no platform credentials set) is
-handled as "not set up yet" -- it's not a bug the watchdog can patch, so
-it's reported and the loop continues. Any other exception is left to
-propagate so it reaches logs/runtime.log for core/watchdog.py to catch.
+"""Entrypoint: wires the voice trigger through either general conversation
+or the video-generation/approval/publish pipeline, chosen by intent.
+
+Only explicit "make/create/generate a video/clip/anime ..." phrasing
+routes to media_generator -> Telegram approval -> YouTube upload (see
+SUPPORTED.md). Everything else goes to core/chat_engine.py for a spoken
+conversational reply. A NotImplementedError from an unconfigured backend
+(no video-gen provider chosen, no platform credentials set, no chat
+provider API key set) is handled as "not set up yet" -- it's not a bug
+the watchdog can patch, so it's reported and the loop continues. Any
+other exception is left to propagate so it reaches logs/runtime.log for
+core/watchdog.py to catch.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import sys
 
 from communication.notify_bridge import TelegramApprovalBridge
 from config.settings import get_settings, settings_manager
+from core.chat_engine import ChatEngine, build_chat_engine
 from core.dashboard import AgentStatus, LogBuffer, create_app, start_dashboard
 from core.state_manager import StateManager
 from core.voice_hub import (
@@ -29,6 +35,14 @@ from core.voice_hub import (
 from modules.media_generator import AnimeVideoGenerator, GenerationRequest, MediaGenerator
 from modules.social_poster import YouTubeClient
 
+_VIDEO_REQUEST_RE = re.compile(
+    r"\b(make|create|generate|produce)\b.{0,25}\b(video|clip|anime|animation)\b", re.IGNORECASE
+)
+
+
+def _is_video_request(text: str) -> bool:
+    return bool(_VIDEO_REQUEST_RE.search(text))
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -40,7 +54,7 @@ log_buffer = LogBuffer()
 logging.getLogger().addHandler(log_buffer)
 
 
-async def handle_transcript(
+async def handle_video_request(
     text: str,
     voice_hub: VoiceHub,
     state_manager: StateManager,
@@ -75,12 +89,38 @@ async def handle_transcript(
     status.state, status.detail = "idle", ""
 
 
+async def handle_chat(
+    text: str,
+    voice_hub: VoiceHub,
+    state_manager: StateManager,
+    chat_engine: ChatEngine,
+    status: AgentStatus,
+    agent_name: str,
+) -> None:
+    task = state_manager.create_task(text)
+    status.state, status.detail = "generating", text
+
+    try:
+        reply = await chat_engine.respond(agent_name, text)
+    except Exception as exc:
+        logger.warning("task %s: chat reply failed: %s", task.id, exc)
+        state_manager.mark_failed(task, str(exc))
+        await voice_hub.speak("I couldn't reach any AI provider just now.")
+        status.state, status.detail = "idle", ""
+        return
+
+    state_manager.mark_done(task, reply)
+    await voice_hub.speak(reply)
+    status.state, status.detail = "idle", ""
+
+
 async def handle_event(
     event: VoiceEvent,
     voice_hub: VoiceHub,
     state_manager: StateManager,
     media_generator: MediaGenerator,
     youtube_client: YouTubeClient,
+    chat_engine: ChatEngine,
     status: AgentStatus,
 ) -> None:
     settings = get_settings()
@@ -90,7 +130,10 @@ async def handle_event(
     elif event.name == TRANSCRIPT_READY:
         text = event.payload
         logger.info("heard: %r", text)
-        await handle_transcript(text, voice_hub, state_manager, media_generator, youtube_client, status)
+        if _is_video_request(text):
+            await handle_video_request(text, voice_hub, state_manager, media_generator, youtube_client, status)
+        else:
+            await handle_chat(text, voice_hub, state_manager, chat_engine, status, settings.agent_name)
     elif event.name == TRANSCRIPT_EMPTY:
         logger.info("no speech detected")
         status.state, status.detail = "idle", ""
@@ -130,6 +173,7 @@ async def main() -> None:
     state_manager = StateManager(approval_bridge)
     media_generator = AnimeVideoGenerator()
     youtube_client = YouTubeClient()
+    chat_engine = build_chat_engine(settings)
     status = AgentStatus()
 
     # Dashboard comes up before the (potentially slow, first-run) speech
@@ -156,7 +200,7 @@ async def main() -> None:
     try:
         while True:
             event = await event_queue.get()
-            await handle_event(event, voice_hub, state_manager, media_generator, youtube_client, status)
+            await handle_event(event, voice_hub, state_manager, media_generator, youtube_client, chat_engine, status)
     except asyncio.CancelledError:
         pass
     finally:

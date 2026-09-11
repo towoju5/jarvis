@@ -47,6 +47,15 @@ class Settings:
 
     anthropic_api_key: str = ""
 
+    # Chat providers for general conversation (core/chat_engine.py). Only
+    # providers with a key set are actually used; the agent tries them in
+    # chat_provider_order and falls back to the next on any failure.
+    openai_api_key: str = ""
+    groq_api_key: str = ""       # free tier; hosts Llama/other open models
+    qwen_api_key: str = ""       # Alibaba DashScope, OpenAI-compatible mode
+    kimi_api_key: str = ""       # Moonshot AI, OpenAI-compatible mode
+    chat_provider_order: str = "claude,groq,openai,qwen,kimi"
+
     dashboard_port: int = 8765
 
     @classmethod
@@ -67,6 +76,11 @@ class Settings:
             telegram_bot_token=get("TELEGRAM_BOT_TOKEN", defaults.telegram_bot_token),
             telegram_chat_id=get("TELEGRAM_CHAT_ID", defaults.telegram_chat_id),
             anthropic_api_key=get("ANTHROPIC_API_KEY", defaults.anthropic_api_key),
+            openai_api_key=get("OPENAI_API_KEY", defaults.openai_api_key),
+            groq_api_key=get("GROQ_API_KEY", defaults.groq_api_key),
+            qwen_api_key=get("QWEN_API_KEY", defaults.qwen_api_key),
+            kimi_api_key=get("KIMI_API_KEY", defaults.kimi_api_key),
+            chat_provider_order=get("CHAT_PROVIDER_ORDER", defaults.chat_provider_order),
             dashboard_port=int(get("DASHBOARD_PORT", str(defaults.dashboard_port)) or defaults.dashboard_port),
         )
 
