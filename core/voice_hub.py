@@ -213,7 +213,16 @@ class VoiceHub:
             raise mic_error
 
     async def speak(self, text: str) -> None:
-        await self._speech_engine.speak(text)
+        """Best-effort voice feedback. Unlike social_poster's calls, a TTS
+        failure (missing audio device, an unreachable voice-model download,
+        ...) is an environment problem the watchdog can't code-patch its
+        way out of -- it must not take the whole agent down over a response
+        it can't currently speak, so it's logged, not raised.
+        """
+        try:
+            await self._speech_engine.speak(text)
+        except Exception:
+            logger.exception("speak() failed; continuing without voice output: %r", text)
 
     def stop(self) -> None:
         self._stopped = True

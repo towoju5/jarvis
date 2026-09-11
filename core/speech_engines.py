@@ -39,7 +39,7 @@ def _resolve_piper_model_path(voice_name: str) -> Path:
     the rhasspy/piper-voices manifest -- the same thing the `piper` CLI's
     --download_dir flag drives.
     """
-    from piper.download import VoiceNotFoundError, ensure_voice_exists, find_voice, get_voices
+    from piper.download import ensure_voice_exists, find_voice, get_voices
 
     PIPER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
     data_dirs = [str(PIPER_VOICES_DIR)]
@@ -47,8 +47,8 @@ def _resolve_piper_model_path(voice_name: str) -> Path:
     try:
         onnx_path, _config_path = find_voice(voice_name, data_dirs)
         return onnx_path
-    except VoiceNotFoundError:
-        pass
+    except ValueError:
+        pass  # not downloaded yet -- find_voice raises plain ValueError, not a dedicated exception type
 
     logger.info("piper voice %r not found locally, downloading to %s", voice_name, PIPER_VOICES_DIR)
     try:

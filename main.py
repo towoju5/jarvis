@@ -1,6 +1,11 @@
-"""Entrypoint. Phase 1: boots settings + the hotkey trigger and reacts to
-VOICE_TRIGGER_ACTIVATED events. Audio transcription (Phase 2), approval flow
-(Phase 4) and publishing (Phase 5) hang off this same event loop later.
+"""Entrypoint: wires the voice trigger through generation, approval, and
+publishing. Each transcript becomes a task: generate -> request Telegram
+approval -> publish to YouTube (the only platform with a real upload path
+today, see SUPPORTED.md). A NotImplementedError from an unconfigured
+backend (no video-gen provider chosen, no platform credentials set) is
+handled as "not set up yet" -- it's not a bug the watchdog can patch, so
+it's reported and the loop continues. Any other exception is left to
+propagate so it reaches logs/runtime.log for core/watchdog.py to catch.
 """
 from __future__ import annotations
 
@@ -8,7 +13,9 @@ import asyncio
 import logging
 import sys
 
+from communication.notify_bridge import TelegramApprovalBridge
 from config.settings import get_settings, settings_manager
+from core.state_manager import StateManager
 from core.voice_hub import (
     TRANSCRIPT_EMPTY,
     TRANSCRIPT_READY,
@@ -18,6 +25,8 @@ from core.voice_hub import (
     VoiceEvent,
     VoiceHub,
 )
+from modules.media_generator import AnimeVideoGenerator, GenerationRequest, MediaGenerator
+from modules.social_poster import YouTubeClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,16 +36,48 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
-async def handle_event(event: VoiceEvent, voice_hub: VoiceHub) -> None:
+async def handle_transcript(
+    text: str,
+    voice_hub: VoiceHub,
+    state_manager: StateManager,
+    media_generator: MediaGenerator,
+    youtube_client: YouTubeClient,
+) -> None:
+    task = state_manager.create_task(text)
+
+    try:
+        result = await media_generator.generate(GenerationRequest(prompt=text))
+    except NotImplementedError as exc:
+        logger.warning("task %s: media generation not configured: %s", task.id, exc)
+        state_manager.mark_failed(task, str(exc))
+        await voice_hub.speak("Media generation isn't set up yet.")
+        return
+
+    summary = f"{result.title or text}\n\nApprove publishing this to YouTube?"
+    approved = await state_manager.request_publish_approval(task, summary)
+    if not approved:
+        await voice_hub.speak("Not approved. Discarding.")
+        return
+
+    upload = await youtube_client.upload(result.video_path, result.title, result.description)
+    state_manager.mark_done(task, upload)
+    await voice_hub.speak(f"Published to YouTube: {upload.url}")
+
+
+async def handle_event(
+    event: VoiceEvent,
+    voice_hub: VoiceHub,
+    state_manager: StateManager,
+    media_generator: MediaGenerator,
+    youtube_client: YouTubeClient,
+) -> None:
     settings = get_settings()
     if event.name == VOICE_TRIGGER_ACTIVATED:
         logger.info("%s is listening...", settings.agent_name)
     elif event.name == TRANSCRIPT_READY:
         text = event.payload
         logger.info("heard: %r", text)
-        # Phase 4/5 route this to the state manager + approval flow instead
-        # of a canned reply.
-        await voice_hub.speak(f"You said: {text}")
+        await handle_transcript(text, voice_hub, state_manager, media_generator, youtube_client)
     elif event.name == TRANSCRIPT_EMPTY:
         logger.info("no speech detected")
 
@@ -61,17 +102,34 @@ async def main() -> None:
     except (HotkeyRegistrationError, MicStreamError):
         logger.exception("could not start any voice trigger (hotkey and mic both failed)")
 
+    approval_bridge: TelegramApprovalBridge | None = None
+    if settings.telegram_bot_token and settings.telegram_chat_id:
+        approval_bridge = TelegramApprovalBridge(settings.telegram_bot_token, settings.telegram_chat_id)
+        try:
+            await approval_bridge.start()
+        except Exception:
+            logger.exception("failed to start telegram approval bridge; publishing will stay unapproved")
+            approval_bridge = None
+    else:
+        logger.warning("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set; publish approval will always be rejected")
+
+    state_manager = StateManager(approval_bridge)
+    media_generator = AnimeVideoGenerator()
+    youtube_client = YouTubeClient()
+
     logger.info("ready. press %s or say the wake word to trigger.", settings.trigger_hotkey)
 
     try:
         while True:
             event = await event_queue.get()
-            await handle_event(event, voice_hub)
+            await handle_event(event, voice_hub, state_manager, media_generator, youtube_client)
     except asyncio.CancelledError:
         pass
     finally:
         voice_hub.stop()
         settings_manager.stop_watching()
+        if approval_bridge is not None:
+            await approval_bridge.stop()
 
 
 if __name__ == "__main__":
