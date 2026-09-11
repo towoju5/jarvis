@@ -116,9 +116,6 @@ async def main() -> None:
     except (HotkeyRegistrationError, MicStreamError):
         logger.exception("could not start any voice trigger (hotkey and mic both failed)")
 
-    logger.info("loading speech models (first run downloads them -- can take a while)...")
-    await voice_hub.warmup()
-
     approval_bridge: TelegramApprovalBridge | None = None
     if settings.telegram_bot_token and settings.telegram_chat_id:
         approval_bridge = TelegramApprovalBridge(settings.telegram_bot_token, settings.telegram_chat_id)
@@ -135,9 +132,21 @@ async def main() -> None:
     youtube_client = YouTubeClient()
     status = AgentStatus()
 
+    # Dashboard comes up before the (potentially slow, first-run) speech
+    # model warmup below -- it must not be blocked behind that, since it's
+    # exactly what you'd want to check *during* a slow warmup.
     dashboard_app = create_app(get_settings, status, state_manager, log_buffer)
     dashboard_runner = await start_dashboard(dashboard_app, "127.0.0.1", settings.dashboard_port)
     logger.info("dashboard: http://127.0.0.1:%d/", settings.dashboard_port)
+
+    async def _run_warmup() -> None:
+        status.state, status.detail = "warming_up", "loading speech models"
+        logger.info("loading speech models in the background (first run downloads them)...")
+        await voice_hub.warmup()
+        if status.state == "warming_up":
+            status.state, status.detail = "idle", ""
+
+    warmup_task = asyncio.create_task(_run_warmup())
 
     logger.info("ready. press %s or say the wake word to trigger.", settings.trigger_hotkey)
 
@@ -148,6 +157,7 @@ async def main() -> None:
     except asyncio.CancelledError:
         pass
     finally:
+        warmup_task.cancel()
         voice_hub.stop()
         settings_manager.stop_watching()
         if approval_bridge is not None:

@@ -76,6 +76,7 @@ _PAGE_HTML = """<!doctype html>
   .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.8rem;
            font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; }
   .badge.idle { background: #4443; }
+  .badge.warming_up { background: #64748b33; color: #64748b; }
   .badge.listening { background: #3b82f633; color: #3b82f6; }
   .badge.generating, .badge.pending_approval { background: #f59e0b33; color: #f59e0b; }
   .badge.publishing { background: #8b5cf633; color: #8b5cf6; }

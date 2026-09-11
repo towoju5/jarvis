@@ -84,21 +84,28 @@ class OfflineSpeechEngine(SpeechEngine):
         self._piper_voice_model = piper_voice_model
         self._whisper = None
         self._piper_voice = None
+        # warmup() now runs as a background task instead of blocking startup,
+        # so it can race with a real trigger's lazy-load of the same model --
+        # these guard against loading (or downloading into the same cache
+        # file) twice concurrently.
+        self._whisper_lock = asyncio.Lock()
+        self._piper_lock = asyncio.Lock()
 
     async def _ensure_whisper(self):
-        if self._whisper is None:
-            def _load():
-                from faster_whisper import WhisperModel
-                logger.info(
-                    "loading faster-whisper model=%r (cpu, int8) -- first run downloads "
-                    "it from Hugging Face and can take a while",
-                    self._whisper_model_size,
-                )
-                model = WhisperModel(self._whisper_model_size, device="cpu", compute_type="int8")
-                logger.info("faster-whisper model=%r ready", self._whisper_model_size)
-                return model
-            self._whisper = await asyncio.to_thread(_load)
-        return self._whisper
+        async with self._whisper_lock:
+            if self._whisper is None:
+                def _load():
+                    from faster_whisper import WhisperModel
+                    logger.info(
+                        "loading faster-whisper model=%r (cpu, int8) -- first run downloads "
+                        "it from Hugging Face and can take a while",
+                        self._whisper_model_size,
+                    )
+                    model = WhisperModel(self._whisper_model_size, device="cpu", compute_type="int8")
+                    logger.info("faster-whisper model=%r ready", self._whisper_model_size)
+                    return model
+                self._whisper = await asyncio.to_thread(_load)
+            return self._whisper
 
     async def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> str:
         model = await self._ensure_whisper()
@@ -113,14 +120,15 @@ class OfflineSpeechEngine(SpeechEngine):
         return await asyncio.to_thread(_run)
 
     async def _ensure_piper(self):
-        if self._piper_voice is None:
-            def _load():
-                from piper import PiperVoice
-                model_path = _resolve_piper_model_path(self._piper_voice_model)
-                logger.info("loading piper voice from %s", model_path)
-                return PiperVoice.load(str(model_path))
-            self._piper_voice = await asyncio.to_thread(_load)
-        return self._piper_voice
+        async with self._piper_lock:
+            if self._piper_voice is None:
+                def _load():
+                    from piper import PiperVoice
+                    model_path = _resolve_piper_model_path(self._piper_voice_model)
+                    logger.info("loading piper voice from %s", model_path)
+                    return PiperVoice.load(str(model_path))
+                self._piper_voice = await asyncio.to_thread(_load)
+            return self._piper_voice
 
     async def speak(self, text: str) -> None:
         if not text.strip():

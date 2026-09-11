@@ -35,8 +35,6 @@ SILENCE_RMS_THRESHOLD = 250.0        # int16 RMS below this counts as silence
 SPEECH_RMS_THRESHOLD = 500.0         # int16 RMS above this counts as speech onset
 SILENCE_FRAMES_TO_STOP = 15          # ~1.2s of silence at 80ms/frame after speech starts
 
-WARMUP_TIMEOUT_SECONDS = 180.0       # cap on first-time model download/load at startup
-
 
 @dataclass
 class VoiceEvent:
@@ -230,24 +228,19 @@ class VoiceHub:
             logger.exception("speak() failed; continuing without voice output: %r", text)
 
     async def warmup(self) -> None:
-        """Pre-load STT/TTS models. Call once at startup, before "ready" --
-        see core/speech_engines.py for why this shouldn't happen lazily.
-
-        Bounded by WARMUP_TIMEOUT_SECONDS: a first-time model download can
-        hang outright (we hit a reproducible huggingface_hub bug where the
-        library's own downloader stalled at 0 bytes on a URL plain
-        `requests` fetched fine) -- this must not block the agent from
-        starting entirely. On timeout, the model just loads lazily on first
-        real use instead, same as before this method existed.
+        """Pre-load STT/TTS models. main.py runs this as a background task
+        (not awaited inline), so it doesn't need its own timeout here --
+        an earlier version wrapped it in asyncio.wait_for(), but that
+        cancels the *awaiting coroutine* only. The actual model download
+        runs in a worker thread via asyncio.to_thread(), which Python
+        cannot forcibly stop; the timeout just abandoned that thread mid-
+        write while releasing the lock guarding it, letting a real
+        trigger's own load attempt start a second, concurrent download
+        into the same file and corrupt it. Let it run to completion
+        instead -- however long that takes on a slow connection.
         """
         try:
-            await asyncio.wait_for(self._speech_engine.warmup(), timeout=WARMUP_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            logger.error(
-                "speech engine warmup did not finish within %ds (likely a stuck model download); "
-                "continuing startup -- models will load lazily on first use instead",
-                WARMUP_TIMEOUT_SECONDS,
-            )
+            await self._speech_engine.warmup()
         except Exception:
             logger.exception("speech engine warmup failed; models will load lazily on first use instead")
 
