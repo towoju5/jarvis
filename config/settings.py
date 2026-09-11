@@ -37,6 +37,8 @@ class Settings:
 
     anthropic_api_key: str = ""
 
+    dashboard_port: int = 8765
+
     @classmethod
     def _from_env_map(cls, env: dict[str, str | None]) -> "Settings":
         def get(key: str, default: str) -> str:
@@ -53,6 +55,7 @@ class Settings:
             telegram_bot_token=get("TELEGRAM_BOT_TOKEN", defaults.telegram_bot_token),
             telegram_chat_id=get("TELEGRAM_CHAT_ID", defaults.telegram_chat_id),
             anthropic_api_key=get("ANTHROPIC_API_KEY", defaults.anthropic_api_key),
+            dashboard_port=int(get("DASHBOARD_PORT", str(defaults.dashboard_port)) or defaults.dashboard_port),
         )
 
 
