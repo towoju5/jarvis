@@ -10,11 +10,20 @@ from __future__ import annotations
 import abc
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
 
 from config.settings import Settings
+
+# huggingface_hub's chunked "xet" transfer backend (hf-xet) has been
+# observed to hang indefinitely -- 0 bytes transferred despite an open
+# connection -- on some network setups, with zero error or timeout. Force
+# the plain HTTP downloader instead: slower per-chunk, but it actually
+# completes and is resumable. Must be set before faster_whisper (and
+# therefore huggingface_hub) is imported anywhere in the process.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +39,11 @@ class SpeechEngine(abc.ABC):
     @abc.abstractmethod
     async def speak(self, text: str) -> None:
         """Synthesize and play `text` through the default output device."""
+
+    async def warmup(self) -> None:
+        """Load models eagerly. Call this once at startup so a slow first
+        download/load happens visibly before "ready", not silently on the
+        first real trigger. Default no-op; OfflineSpeechEngine overrides it."""
 
 
 def _resolve_piper_model_path(voice_name: str) -> Path:
@@ -75,8 +89,14 @@ class OfflineSpeechEngine(SpeechEngine):
         if self._whisper is None:
             def _load():
                 from faster_whisper import WhisperModel
-                logger.info("loading faster-whisper model=%r (cpu, int8)", self._whisper_model_size)
-                return WhisperModel(self._whisper_model_size, device="cpu", compute_type="int8")
+                logger.info(
+                    "loading faster-whisper model=%r (cpu, int8) -- first run downloads "
+                    "it from Hugging Face and can take a while",
+                    self._whisper_model_size,
+                )
+                model = WhisperModel(self._whisper_model_size, device="cpu", compute_type="int8")
+                logger.info("faster-whisper model=%r ready", self._whisper_model_size)
+                return model
             self._whisper = await asyncio.to_thread(_load)
         return self._whisper
 
@@ -117,6 +137,10 @@ class OfflineSpeechEngine(SpeechEngine):
             sd.wait()
 
         await asyncio.to_thread(_synthesize_and_play)
+
+    async def warmup(self) -> None:
+        await self._ensure_whisper()
+        await self._ensure_piper()
 
 
 class OnlineSpeechEngine(SpeechEngine):

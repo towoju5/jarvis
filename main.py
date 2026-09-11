@@ -116,6 +116,9 @@ async def main() -> None:
     except (HotkeyRegistrationError, MicStreamError):
         logger.exception("could not start any voice trigger (hotkey and mic both failed)")
 
+    logger.info("loading speech models (first run downloads them -- can take a while)...")
+    await voice_hub.warmup()
+
     approval_bridge: TelegramApprovalBridge | None = None
     if settings.telegram_bot_token and settings.telegram_chat_id:
         approval_bridge = TelegramApprovalBridge(settings.telegram_bot_token, settings.telegram_chat_id)

@@ -35,6 +35,8 @@ SILENCE_RMS_THRESHOLD = 250.0        # int16 RMS below this counts as silence
 SPEECH_RMS_THRESHOLD = 500.0         # int16 RMS above this counts as speech onset
 SILENCE_FRAMES_TO_STOP = 15          # ~1.2s of silence at 80ms/frame after speech starts
 
+WARMUP_TIMEOUT_SECONDS = 180.0       # cap on first-time model download/load at startup
+
 
 @dataclass
 class VoiceEvent:
@@ -152,8 +154,11 @@ class VoiceHub:
         if self._recording_lock.locked():
             return
         async with self._recording_lock:
-            # Drain any frames queued up while we were idle so recording
-            # starts from "now", not from a stale backlog.
+            # Ack first so the user knows the trigger registered instead of
+            # wondering if anything happened -- then drain whatever the mic
+            # picked up while that played (including any acoustic echo of
+            # it) before actually listening for the command.
+            await self.speak("Yes?")
             while not self._raw_frames.empty():
                 self._raw_frames.get_nowait()
 
@@ -223,6 +228,28 @@ class VoiceHub:
             await self._speech_engine.speak(text)
         except Exception:
             logger.exception("speak() failed; continuing without voice output: %r", text)
+
+    async def warmup(self) -> None:
+        """Pre-load STT/TTS models. Call once at startup, before "ready" --
+        see core/speech_engines.py for why this shouldn't happen lazily.
+
+        Bounded by WARMUP_TIMEOUT_SECONDS: a first-time model download can
+        hang outright (we hit a reproducible huggingface_hub bug where the
+        library's own downloader stalled at 0 bytes on a URL plain
+        `requests` fetched fine) -- this must not block the agent from
+        starting entirely. On timeout, the model just loads lazily on first
+        real use instead, same as before this method existed.
+        """
+        try:
+            await asyncio.wait_for(self._speech_engine.warmup(), timeout=WARMUP_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.error(
+                "speech engine warmup did not finish within %ds (likely a stuck model download); "
+                "continuing startup -- models will load lazily on first use instead",
+                WARMUP_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.exception("speech engine warmup failed; models will load lazily on first use instead")
 
     def stop(self) -> None:
         self._stopped = True

@@ -29,7 +29,11 @@ class Settings:
     trigger_hotkey: str = "<cmd>+z"
     execution_mode: str = "OFFLINE"
 
-    whisper_model_size: str = "base"
+    # .en (English-only) variants are preferred over the multilingual ones:
+    # smaller, faster, matches the "hey jarvis" wake word's language, and
+    # we hit a reproducible hang in huggingface_hub's downloader for the
+    # plain "base" model on some networks that "base.en" didn't show.
+    whisper_model_size: str = "base.en"
     piper_voice_model: str = "en_US-lessac-medium"
 
     telegram_bot_token: str = ""
