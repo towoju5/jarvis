@@ -1,0 +1,17 @@
+# Core and System Utilities
+pynput==1.7.7
+python-dotenv==1.0.1
+
+# Speech-to-Text & Text-to-Speech (CPU Optimized)
+faster-whisper==1.0.3
+piper-tts==1.2.0
+sounddevice==0.4.6
+numpy==1.26.4
+
+# Remote Gateways & Communication
+python-telegram-bot==21.4
+requests==2.32.3
+aiohttp==3.9.5
+
+# Git integration for the self-healing watchdog (guarded patch/rollback flow)
+GitPython==3.1.43
