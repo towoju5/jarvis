@@ -33,7 +33,7 @@ TRANSCRIPT_EMPTY = "TRANSCRIPT_EMPTY"
 MAX_RECORDING_SECONDS = 10.0
 SILENCE_RMS_THRESHOLD = 250.0        # int16 RMS below this counts as silence
 SPEECH_RMS_THRESHOLD = 500.0         # int16 RMS above this counts as speech onset
-SILENCE_FRAMES_TO_STOP = 6            # ~0.5s of silence at 80ms/frame after speech starts
+SILENCE_FRAMES_TO_STOP = 13           # ~1.0s of silence at 80ms/frame after speech starts
 
 
 @dataclass
